@@ -9,3 +9,4 @@ error/
 out/
 log/
 output/
+*.log
