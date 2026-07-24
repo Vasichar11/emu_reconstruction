@@ -12,12 +12,14 @@ output = output/proc.$(ClusterId).$(CELL).$(PLATENUMBER).out
 error = error/proc.$(ClusterId).$(CELL).$(PLATENUMBER).err
 log = log/proc.$(ClusterId).log
 
-transfer_plugins=/eos/experiment/sndlhc/plugins/xrdcp_plugin.py
-output_destination=root://eospublic.cern.ch/$(EXP_DIR)/RUN$(RUN)/$(BRICKFOLDER)/cells/$(CELLFOLDER)/$(BRICKFOLDER)/$(PLATEFOLDER)/
-transfer_output_files=$(BRICK).$(PLATENUMBER).$INT(X).$INT(Y).mos.root, $(BRICK).$(PLATENUMBER).$INT(X).$INT(Y).cp.root
+# Data outputs (mos.root, cp.root) are xrdcp'd inside condor_proc.sh;
+# no Condor transfer_output_files needed.  stdout/stderr are transferred
+# back to the submit IWD (3.cell_proc/output/ and error/) where they are
+# always accessible regardless of job outcome.
 should_transfer_files = yes
 
 +JobFlavour = "microcentury"
+#+JobFlavour = "espresso"
 request_memory = 3GB
 request_cpus = 1
 +HEPSPEC_PER_CORE = 10
@@ -25,6 +27,8 @@ requirements = TARGET.HEPSPEC_PER_CORE =!= UNDEFINED
 notification = Never
 requirements = (OpSysAndVer =?= "AlmaLinux9")
 requirements = Machine =!= LastRemoteHost
-on_exit_remove          = (ExitBySignal == False) && ((ExitCode == 1) || (ExitCode == 0) && fileExists("$(BRICK).$(PLATENUMBER).$INT(X).$INT(Y).cp.root"))
+# Remove (success) only when script exits 0, i.e. all steps + xrdcp succeeded.
+# Any non-zero exit triggers a retry (up to max_retries).
+on_exit_remove          = (ExitBySignal == False) && (ExitCode == 0)
 max_retries             = 3
 queue PLATENUMBER, CELL from volumes.dat
