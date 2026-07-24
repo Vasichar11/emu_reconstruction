@@ -11,3 +11,4 @@ log/
 output/
 *.log
 *.dat
+*.cc
