@@ -165,13 +165,18 @@ while IFS= read -r -d '' BRICK_DIR; do
     DONE_SIG="${DATA_PLATE_DIR}/${BRICK}.${N}.0.0.tag.root"
     [ -f "$DONE_SIG" ] && continue
 
-    # Resubmit throttle.
+    # Resubmit throttle. MARKER is a directory so the claim below is atomic:
+    # this closes a race where two watcher passes both see "not submitted yet"
+    # and both condor_submit the same plate (observed as duplicate concurrent jobs).
     MARKER="$STATE_DIR/plate_${N}"
-    if [ -f "$MARKER" ]; then
+    if [ -d "$MARKER" ]; then
       AGE=$(( $(date +%s) - $(stat -c %Y "$MARKER" 2>/dev/null || echo 0) ))
       [ "$AGE" -lt "$RESUBMIT_AFTER_S" ] && continue
       log "  $BRICKFOLDER/p$(printf '%03d' "$N"): marker ${AGE}s old, resubmitting"
+      rmdir "$MARKER" 2>/dev/null
     fi
+    # Claim this plate before submitting; if another pass beat us to it, skip.
+    mkdir "$MARKER" 2>/dev/null || continue
 
     # Provenance: create plate dir + symlink to the exact raw file used.
     mkdir -p "$DATA_PLATE_DIR" 2>/dev/null
@@ -201,9 +206,10 @@ while IFS= read -r -d '' BRICK_DIR; do
           -a LOG_DIR="${BRICK_DIR}/log" \
           -a JOBFLAVOUR="$JOBFLAVOUR" \
           "$SUBMIT_FILE" ); then
-      touch "$MARKER"
+      : # claim (mkdir above) already recorded the submission
     else
       log "  $BRICKFOLDER/$DIRNAME: condor_submit failed; will retry"
+      rmdir "$MARKER" 2>/dev/null   # release claim so the next tick retries
     fi
   done
 
