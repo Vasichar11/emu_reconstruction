@@ -89,9 +89,21 @@ eos_get "$OMP_EOS_SRC/libAlignment.so"         "$OMP_LIB_DIR/" || { echo "ERROR:
 # any .pcm file in LD_LIBRARY_PATH dirs, and FEDRA .pcm files interfere with
 # ROOT's startup, causing root -b -q -e TFile::Open() to crash (false zombie).
 # Do NOT add OMP_LIB_DIR to LD_LIBRARY_PATH for the same reason.
-# We use LD_PRELOAD (inline, per FEDRA call) to bypass RPATH — that alone
-# is sufficient: the .so files carry their own transitive dependencies.
-_FEDRA_PRELOAD="$OMP_LIB_DIR/libMosaic.so:$OMP_LIB_DIR/libAlignment.so"
+# We use LD_PRELOAD (inline, per FEDRA call) to bypass RPATH.
+#
+# IMPORTANT — preload order must mirror viewsideal's own NEEDED order
+# (libScan, libMosaic, libEdb, libEbase, libEmath, libEphys, libvt, libEdr,
+# libEIO, libEMC, libAlignment, libDataConversion). LD_PRELOAD libraries run
+# their (ROOT dictionary) global constructors immediately, in listed order,
+# BEFORE the executable's own dependency chain loads. Preloading only
+# libMosaic/libAlignment out of order made libEMC.so/libEdr.so try to
+# resolve symbols (e.g. EdbScanProc's vtable) from libraries that hadn't
+# loaded yet -> "undefined symbol" crash on every job. Interleaving the
+# stock libs (already on disk via AFS, no fetch needed) at their real
+# positions reproduces the normal load order exactly, with only the two
+# OMP-rebuilt libs substituted in place.
+_STOCK=/afs/cern.ch/user/s/snd2cern/public/fedra/lib
+_FEDRA_PRELOAD="$_STOCK/libScan.so:$OMP_LIB_DIR/libMosaic.so:$_STOCK/libEdb.so:$_STOCK/libEbase.so:$_STOCK/libEmath.so:$_STOCK/libEphys.so:$_STOCK/libvt.so:$_STOCK/libEdr.so:$_STOCK/libEIO.so:$_STOCK/libEMC.so:$OMP_LIB_DIR/libAlignment.so"
 CPUS=$(nproc)
 export OMP_NUM_THREADS=$CPUS OMP_PROC_BIND=close OMP_WAIT_POLICY=passive
 export FEDRA_OMP_BATCH=$((CPUS * 2))

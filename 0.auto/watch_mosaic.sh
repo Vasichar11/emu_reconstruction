@@ -173,6 +173,13 @@ while IFS= read -r -d '' BRICK_DIR; do
     # this closes a race where two watcher passes both see "not submitted yet"
     # and both condor_submit the same plate (observed as duplicate concurrent jobs).
     MARKER="$STATE_DIR/plate_${N}"
+    # Legacy markers were plain files (touch-based, pre-atomic-fix); a leftover
+    # file here would make mkdir below fail forever and silently freeze this
+    # plate. Treat it as stale and clear it so the mkdir claim can proceed.
+    if [ -e "$MARKER" ] && [ ! -d "$MARKER" ]; then
+      log "  $BRICKFOLDER/p$(printf '%03d' "$N"): legacy file marker found, clearing"
+      rm -f "$MARKER" 2>/dev/null
+    fi
     if [ -d "$MARKER" ]; then
       AGE=$(( $(date +%s) - $(stat -c %Y "$MARKER" 2>/dev/null || echo 0) ))
       [ "$AGE" -lt "$RESUBMIT_AFTER_S" ] && continue
