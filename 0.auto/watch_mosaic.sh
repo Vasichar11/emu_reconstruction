@@ -39,8 +39,12 @@
 #   3. Nothing else.
 #
 # Acrontab (ONE line, forever — any account, no extra env vars needed):
-#   */5 * * * * lxplus.cern.ch /eos/experiment/sndlhc/users/vacharit/poller/watch_mosaic.sh \
-#       >> /eos/experiment/sndlhc/users/vacharit/poller/watch_mosaic.log 2>&1
+#   */1 * * * * lxplus.cern.ch /eos/experiment/sndlhc/users/vacharit/emu_reconstruction/0.auto/watch_mosaic.sh \
+#       >> /eos/experiment/sndlhc/users/vacharit/emu_reconstruction/0.auto/watch_mosaic.log 2>&1
+#
+# All pipeline code (this script, condor_brick.sub, run_plate.sh, check_*.C)
+# lives here — this is the vacharit/emu_reconstruction git checkout (dev repo).
+# Do not use the poller/ (removed) or emuplot-account copies; they are dead.
 # =============================================================================
 
 # Directories to scan for brick.cfg files.
@@ -49,7 +53,7 @@ BRICKS_SEARCH_ROOTS=(
   /eos/experiment/sndlhc/emulsionData/emureco_CERN
   /eos/experiment/sndlhc/emulsionData/emureco_Napoli
 )
-PIPE_DIR=/eos/experiment/sndlhc/users/vacharit/poller   # scripts, macros, state, logs
+PIPE_DIR=/eos/experiment/sndlhc/users/vacharit/emu_reconstruction/0.auto   # scripts, macros, logs
 SUBMIT_FILE=${PIPE_DIR}/condor_brick.sub
 
 # workday flavour = 8 h wall limit. With OMP, normal plates finish in ~2 h,
