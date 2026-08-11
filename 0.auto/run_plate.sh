@@ -229,7 +229,13 @@ eos_put "$MOS_FILE" "${DATA_PLATE_DIR}/$(basename "$MOS_FILE")" \
 # =============================================================================
 TAG_FILE="$PLATEFOLDER/$BRICKID.$PLATENUMBER.0.0.tag.root"
 echo "----- Stage 2: mostag $BRICKID.$PLATENUMBER.0.0 -----"
-LD_PRELOAD="$_FEDRA_PRELOAD" mostag -id="$BRICKID.$PLATENUMBER.0.0" -v=1
+# Upstream mostag (FEDRA svn r1627, 2026-03-09) added an unconditional
+# std::filesystem::exists(inputPath) check that runs even in -id= mode,
+# where inputPath is never set -> always empty -> always fails -> mostag
+# exits 1 before doing anything, every single call. Passing any existing
+# path as a trailing positional arg satisfies the check; -id= mode itself
+# ignores the value. Verified: -id mode's own code path never reads inputPath.
+LD_PRELOAD="$_FEDRA_PRELOAD" mostag -id="$BRICKID.$PLATENUMBER.0.0" -v=1 "$MOS_FILE"
 [ -s "$TAG_FILE" ] || { echo "ERROR: mostag produced no tag.root"; exit 5; }
 echo "tag.root: $(stat --format='%s' "$TAG_FILE") bytes"
 eos_put "$TAG_FILE" "${DATA_PLATE_DIR}/$(basename "$TAG_FILE")" \
