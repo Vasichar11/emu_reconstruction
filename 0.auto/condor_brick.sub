@@ -18,6 +18,10 @@ executable = run_plate.sh
 BRICK       = 413
 BRICK_DIR   = /eos/experiment/sndlhc/users/vacharit/bricks/RUN4/b000413
 PLATENUMBER = 5
+PLATE_SUFFIX =
+
+# Pass the variant independently of optional positional HeaderCut arguments.
+environment = "MOSAIC_PLATE_SUFFIX=$(PLATE_SUFFIX)"
 IN_FILE     = /eos/experiment/sndlhc/emulsionData/CERN/SND/RUN4/RUN4_W1_B3/P005/tracks.raw.root
 LOG_DIR     = /eos/experiment/sndlhc/users/vacharit/emu_reconstruction/0.auto/log
 

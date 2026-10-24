@@ -22,6 +22,8 @@
 #                            /abs/dir               -> /abs/dir/tracks.raw.root
 #                            /abs/file.raw.root     -> used verbatim
 #   <plate> = <spec>      same as ':'
+#   <plate>_<variant> = <spec>  independent output in p<NNN>_<variant>/
+#                             explicit raw spec required (44_merged=P044_merged)
 # Plates NOT listed are NEVER processed (explicit opt-in only).
 # A brick with no plate lines is skipped.
 # tag.root present = plate done, never resubmitted.
@@ -128,10 +130,10 @@ while IFS= read -r -d '' BRICK_DIR; do
   #   <plate> : <spec>         process plate, raw resolved from <spec> (see resolve_raw)
   #   <plate> = <spec>         same as ':'
   # If ANY plate lines are present, ONLY those plates are processed.
-  # If NO plate lines are present, every RAW_DIR/P<NNN>/tracks.raw.root is processed.
+  # If NO plate lines are present, this brick is skipped.
   # -----------------------------------------------------------------------
   RAW_DIR=""
-  PLATE_NS=(); PLATE_SPECS=()
+  PLATE_NS=(); PLATE_SUFFIXES=(); PLATE_SPECS=()
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     line="${line%%#*}"
@@ -140,9 +142,20 @@ while IFS= read -r -d '' BRICK_DIR; do
     [ -z "$line" ] && continue
     if [[ "$line" =~ ^RAW_DIR[[:space:]]*=[[:space:]]*(.*)$ ]]; then
       RAW_DIR="${BASH_REMATCH[1]}"
-    elif [[ "$line" =~ ^([0-9]+)[[:space:]]*[:=]?[[:space:]]*(.*)$ ]]; then
-      PLATE_NS+=("${BASH_REMATCH[1]}")
-      PLATE_SPECS+=("${BASH_REMATCH[2]}")
+    elif [[ "$line" =~ ^([0-9]+)(_[a-zA-Z0-9][a-zA-Z0-9_-]*)?([[:space:]]*[:=][[:space:]]*|[[:space:]]+)(.*)$ ]] ||
+         [[ "$line" =~ ^([0-9]+)$ ]]; then
+      number="${BASH_REMATCH[1]}"
+      suffix="${BASH_REMATCH[2]}"
+      spec="${BASH_REMATCH[4]}"
+      if [ -n "$suffix" ] && [ -z "$spec" ]; then
+        log "  $BRICKFOLDER: variant requires an explicit raw path: $line"
+        continue
+      fi
+      PLATE_NS+=("$((10#$number))")
+      PLATE_SUFFIXES+=("$suffix")
+      PLATE_SPECS+=("$spec")
+    elif [[ "$line" =~ ^[0-9] ]]; then
+      log "  $BRICKFOLDER: invalid plate entry, skipped: $line"
     fi
   done < "$CFG"
 
@@ -159,10 +172,11 @@ while IFS= read -r -d '' BRICK_DIR; do
   # Process each requested plate.
   for i in "${!PLATE_NS[@]}"; do
     N="${PLATE_NS[$i]}"
+    PLATE_SUFFIX="${PLATE_SUFFIXES[$i]}"
     SRC=$(resolve_raw "${PLATE_SPECS[$i]}" "$RAW_DIR" "$N")
     [ -f "$SRC" ] || continue                      # raw not transferred yet
 
-    PLATEFOLDER=$(printf "p%03d" "$N")
+    PLATEFOLDER="$(printf "p%03d" "$N")${PLATE_SUFFIX}"
     DATA_PLATE_DIR="${BRICK_DIR}/${PLATEFOLDER}"
 
     # Done? tag.root already produced.
@@ -172,18 +186,18 @@ while IFS= read -r -d '' BRICK_DIR; do
     # Resubmit throttle. MARKER is a directory so the claim below is atomic:
     # this closes a race where two watcher passes both see "not submitted yet"
     # and both condor_submit the same plate (observed as duplicate concurrent jobs).
-    MARKER="$STATE_DIR/plate_${N}"
+    MARKER="$STATE_DIR/plate_${N}${PLATE_SUFFIX}"
     # Legacy markers were plain files (touch-based, pre-atomic-fix); a leftover
     # file here would make mkdir below fail forever and silently freeze this
     # plate. Treat it as stale and clear it so the mkdir claim can proceed.
     if [ -e "$MARKER" ] && [ ! -d "$MARKER" ]; then
-      log "  $BRICKFOLDER/p$(printf '%03d' "$N"): legacy file marker found, clearing"
+      log "  $BRICKFOLDER/$PLATEFOLDER: legacy file marker found, clearing"
       rm -f "$MARKER" 2>/dev/null
     fi
     if [ -d "$MARKER" ]; then
       AGE=$(( $(date +%s) - $(stat -c %Y "$MARKER" 2>/dev/null || echo 0) ))
       [ "$AGE" -lt "$RESUBMIT_AFTER_S" ] && continue
-      log "  $BRICKFOLDER/p$(printf '%03d' "$N"): marker ${AGE}s old, resubmitting"
+      log "  $BRICKFOLDER/$PLATEFOLDER: marker ${AGE}s old, resubmitting"
       rmdir "$MARKER" 2>/dev/null
     fi
     # Claim this plate before submitting; if another pass beat us to it, skip.
@@ -208,18 +222,19 @@ while IFS= read -r -d '' BRICK_DIR; do
       JOBFLAVOUR="tomorrow"
     fi
 
-    log "  $BRICKFOLDER/p$(printf '%03d' "$N") (brick=$BRICK, raw=${SRC_GB}GB → $JOBFLAVOUR): submitting full-chain job"
+    log "  $BRICKFOLDER/$PLATEFOLDER (brick=$BRICK, raw=${SRC_GB}GB → $JOBFLAVOUR): submitting full-chain job"
     if ( cd "$PIPE_DIR" && condor_submit \
           -a BRICK="$BRICK" \
           -a BRICK_DIR="$BRICK_DIR" \
           -a PLATENUMBER="$N" \
+          -a PLATE_SUFFIX="$PLATE_SUFFIX" \
           -a IN_FILE="$SRC" \
           -a LOG_DIR="${BRICK_DIR}/log" \
           -a JOBFLAVOUR="$JOBFLAVOUR" \
           "$SUBMIT_FILE" ); then
       : # claim (mkdir above) already recorded the submission
     else
-      log "  $BRICKFOLDER/$DIRNAME: condor_submit failed; will retry"
+      log "  $BRICKFOLDER/$PLATEFOLDER: condor_submit failed; will retry"
       rmdir "$MARKER" 2>/dev/null   # release claim so the next tick retries
     fi
   done

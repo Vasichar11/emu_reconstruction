@@ -19,13 +19,16 @@
 #     p<NNN>/<BRICK>.<N>.0.0.raw.root   (48 GB, copied from RAW_DIR/P<NNN>)
 #   run viewsideal/mostag from scratch → p<NNN>/*.mos.root, *.tag.root
 #
-# Outputs go to  BRICK_DIR/p<NNN>/  (lowercase p, experiment space):
+# Outputs go to  BRICK_DIR/p<NNN><suffix>/  (lowercase p, experiment space):
 #   <BRICK>.<N>.0.0.mos.root
 #   <BRICK>.<N>.0.0.tag.root                       (done signal)
 #   <BRICK>.<HI>.0.0_<BRICK>.<LO>.0.0.al.root      (if alignment ran)
 #   <BRICK>.<HI>.0.0_<BRICK>.<LO>.0.0.aff.par
 #   pipeline.log
 #
+# Environment: MOSAIC_PLATE_SUFFIX (e.g. _merged; default empty).
+# Variant alignment uses neighbours with the same suffix; alignment products
+# go to AFF<suffix>/ and QA plots to report/{mos,tal}<suffix>/.
 # Args (from condor_brick.sub):
 #   $1  ClusterID
 #   $2  BRICK        integer brick ID (e.g. 413)
@@ -39,6 +42,13 @@
 export EOSSHIP=root://eospublic.cern.ch/
 export XRD=root://eospublic.cern.ch
 
+# FEDRA scratch paths and IDs remain numeric. Only persistent paths vary.
+PLATE_SUFFIX=${MOSAIC_PLATE_SUFFIX:-}
+if [[ ! "$PLATE_SUFFIX" =~ ^(_[a-zA-Z0-9][a-zA-Z0-9_-]*)?$ ]]; then
+  echo "ERROR: invalid MOSAIC_PLATE_SUFFIX: $PLATE_SUFFIX" >&2
+  exit 2
+fi
+
 BRICKID=$2
 BRICK_DIR=$3
 PLATENUMBER=$4
@@ -49,7 +59,7 @@ SCRIPT_DIR=/eos/experiment/sndlhc/users/vacharit/emu_reconstruction/0.auto   # d
 
 BRICKFOLDER=$(printf "b%06d" "$BRICKID")
 PLATEFOLDER=$(printf "p%03d" "$PLATENUMBER")
-DATA_PLATE_DIR="${BRICK_DIR}/${PLATEFOLDER}"
+DATA_PLATE_DIR="${BRICK_DIR}/${PLATEFOLDER}${PLATE_SUFFIX}"
 
 # --- EOS I/O helpers (everything is experiment space → xrdcp) ----------------
 eos_get()   { xrdcp -f -N "${XRD}/$1" "$2"; }
@@ -247,7 +257,7 @@ HI=0; LO=0  # high/low plate numbers of the aligned pair
 
 # =============================================================================
 # Stage 3: inter-plate alignment with an adjacent plate (if its tag.root exists).
-# Adjacent tag.root looked up in BRICK_DIR/p<N±1>/  (lowercase p).
+# Adjacent tag.root looked up in BRICK_DIR/p<N±1><suffix>/ (same variant).
 # align convention: -A=HIGH -B=LOW (higher plate number first).
 # =============================================================================
 echo "=== Stage 3: inter-plate alignment ==="
@@ -258,7 +268,7 @@ else
   for TRY_N in $((PLATENUMBER + 1)) $((PLATENUMBER - 1)); do
     [ "$TRY_N" -lt 1 ] && continue
     TRY_FOLDER=$(printf "p%03d" "$TRY_N")
-    CAND_TAG="${BRICK_DIR}/${TRY_FOLDER}/$BRICKID.$TRY_N.0.0.tag.root"
+    CAND_TAG="${BRICK_DIR}/${TRY_FOLDER}${PLATE_SUFFIX}/$BRICKID.$TRY_N.0.0.tag.root"
     mkdir -p "./$TRY_FOLDER"
     if eos_get "$CAND_TAG" "./$TRY_FOLDER/$BRICKID.$TRY_N.0.0.tag.root" 2>/dev/null; then
       ADJ_N_USED=$TRY_N
@@ -279,15 +289,15 @@ else
     AL_ROOT="AFF/$BRICKID.$HI.0.0_$BRICKID.$LO.0.0.al.root"
     AFF_FILE="AFF/$BRICKID.$HI.0.0_$BRICKID.$LO.0.0.aff.par"
     if [ -s "$AL_ROOT" ]; then
-      # Alignment products go to the brick-level AFF/ dir (production layout),
+      # Alignment products go to brick-level AFF<suffix>/ (AFF/ for default),
       # NOT the plate dir — so the QA extractor finds them where check_al.C /
       # extract.py expect (brick_root/AFF/*.al.root).
-      AFF_DEST="${BRICK_DIR}/AFF"
+      AFF_DEST="${BRICK_DIR}/AFF${PLATE_SUFFIX}"
       eos_mkdir "$AFF_DEST"
       for f in "$AL_ROOT" "$AFF_FILE"; do
         [ -s "$f" ] || continue
         eos_put "$f" "${AFF_DEST}/$(basename "$f")" \
-          && echo "✓ $(basename "$f") → bricks/AFF uploaded" \
+          && echo "✓ $(basename "$f") → ${AFF_DEST} uploaded" \
           || echo "WARNING: $(basename "$f") upload failed"
       done
     else
@@ -310,7 +320,7 @@ if [ -s "${PLATEFOLDER}/${BRICKID}.${PLATENUMBER}.0.0.mos.root" ] && [ -f ./chec
   echo "  check_mos: plate ${PLATENUMBER} (kRun=${KRUN})"
   root -b -q "check_mos.C(${PLATENUMBER}, ${PLATENUMBER}, ${BRICKID}, ${KRUN}, \"${MOS_PNG_DIR}\")" \
     2>&1 | grep -v -E '(cling::|^\s*$|Warning in <TCanvas|^Info )' || true
-  EOS_MOS_DIR="${BRICK_DIR}/report/mos"
+  EOS_MOS_DIR="${BRICK_DIR}/report/mos${PLATE_SUFFIX}"
   eos_mkdir "$EOS_MOS_DIR"
   for _png in "$MOS_PNG_DIR"/mos*.png; do
     [ -f "$_png" ] || continue
@@ -331,7 +341,7 @@ if [ -n "$AL_ROOT" ] && [ -s "$AL_ROOT" ] && [ -f ./check_al.C ]; then
   echo "  check_al: plates ${LO}-${HI}"
   root -b -q "check_al.C(${LO}, ${LO}, ${BRICKID}, \"${AL_PNG_DIR}\")" \
     2>&1 | grep -v -E '(cling::|^\s*$|Warning in <TCanvas|^Info )' || true
-  EOS_AL_DIR="${BRICK_DIR}/report/tal"
+  EOS_AL_DIR="${BRICK_DIR}/report/tal${PLATE_SUFFIX}"
   eos_mkdir "$EOS_AL_DIR"
   for _png in "$AL_PNG_DIR"/*.png; do
     [ -f "$_png" ] || continue
